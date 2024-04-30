@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-workdir=$(dirname 0)
+workdir=$(dirname $0)
 . ${workdir}/set-credentials.sh
 
 # Search Group

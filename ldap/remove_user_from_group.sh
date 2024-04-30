@@ -1,5 +1,5 @@
 #!/bin/bash
-workdir=$(dirname 0)
+workdir=$(dirname $0)
 . ${workdir}/set-credentials.sh
 
 GROUP_DN=`ldapsearch -x -LLL -H ldap://${LDAP_HOST} -D "${BIND_DN}" -w ${BIND_PW} -b "${GROUP_BASE}" -s sub "cn=${1}" | grep dn:|sed 's/dn: //g'`
