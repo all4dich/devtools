@@ -15,16 +15,11 @@ dn: $GROUP_DN
 changetype: modify
 delete: member
 member: $USER_DN
-EOF
-
-cat << EOF >  remove_memberUid.ldif
-dn: ${GROUP_DN}
-changetype: modify
+-
 delete: memberUid
 memberUid: ${2}
 EOF
 
 set -x
 ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f remove_member.ldif
-ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f remove_memberUid.ldif
 set +x

@@ -16,15 +16,9 @@ dn: $GROUP_DN
 changetype: modify
 add: member
 member: $USER_DN
-EOF
-
-cat << EOF >  update_group2.ldif
-dn: $GROUP_DN
-changetype: modify
+-
 add: memberUid
 memberUid: ${2}
 EOF
 
 ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f update_group1.ldif
-ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f update_group2.ldif
-#ldapmodify -H ${LDAP_SERVER} -D "uid=admin,cn=users,dc=nas-admin,dc=nota,dc=ai" -w "wecgyv-dIjrov-tufxo7" -f update_user.ldif
