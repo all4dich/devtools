@@ -20,6 +20,5 @@ delete: memberUid
 memberUid: ${2}
 EOF
 
-set -x
+echo "INFO: Remove a user from a group ${GROUP_DN} on LDAP"
 ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f remove_member.ldif
-set +x

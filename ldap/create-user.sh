@@ -1,29 +1,31 @@
 #!/bin/bash
 set -e
 workdir=$(dirname $0)
+echo "INFO: Load credentials"
 . ${workdir}/set-credentials.sh
-USER_DN="uid=${1},${USER_BASE}"
+
+username=${1}
+USER_DN="uid=${username},${USER_BASE}"
 echo "INFO: User DN = $USER_DN"
 
 maxUid=`ldapsearch -x -LLL -H ${LDAP_SERVER}  -D "${BIND_DN}" -w "${BIND_PW}" -b "${USER_BASE}" "(uidNumber=*)" uidNumber | grep uidNumber | awk '{print $2}' | sort -n | tail -n 1`
-echo "INFO: Max uid = $maxUid"
+echo "INFO: Current Max uid = $maxUid"
 #maxUid_next=$((maxUid+1))
 maxUid_next=`ldapsearch -x -LLL  -H ldap://${LDAP_HOST} -b "cn=CurID,cn=synoconf,$ROOT_DN" "(uidNumber=*)" uidNumber| grep uidNumber| awk -F ' ' '{print $NF}' | sort -n | tail -1`
-echo "INFO: Next uid = ${maxUid_next}"
+echo "INFO: New uid for a user ${username}= ${maxUid_next}"
 
 #Get the last sambaSID
 sambaSID=`ldapsearch -x -LLL -H ${LDAP_SERVER}  -D "${BIND_DN}" -w "${BIND_PW}" -b "${USER_BASE}" "(sambaSID=*)" sambaSID| grep sambaSID | awk '{print $2}' | sort -n | tail -n 1`
-echo $sambaSID
+echo "INFO: Lasted sambaSID on LDAP = "$sambaSID
 # Split sambaSID with '-' and get the last part
 sambaSID_last=`echo $sambaSID | awk -F '-' '{print $NF}'`
-echo $sambaSID_last
 #sambaNextUserRid=$((sambaSID_last+1))
 sambaNextUserRid=`ldapsearch -x -LLL  -H ldap://${LDAP_HOST} -b "$ROOT_DN" "(sambaNextUserRid=*)" sambaNextUserRid | grep sambaNextUserRid| awk -F ' ' '{print $NF}' | sort -n | tail -1`
-echo $sambaNextUserRid
 # Replace the last part of sambaSID with the next number
 sambaSID_new=`echo $sambaSID | sed "s/${sambaSID_last}/${sambaNextUserRid}/"`
-echo $sambaSID_new
+echo "INFO: New sambaSID for a user ${username} = ${sambaSID_new}"
 
+ehco "INFO: Create a new user entry file(LDIF) for ${username}"
 cat << EOF >  create-user.ldif
 # Define the new user entry
 dn: ${USER_DN}
@@ -55,7 +57,7 @@ loginShell: /bin/bash
 sambaSID: ${sambaSID_new}
 EOF
 
-#ldapmodify -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f create-user.ldif
+echo "INFO: Create a new user entry on LDAP"
 ldapmodify -x  -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f create-user.ldif
 
 # Set the next RID
@@ -70,6 +72,7 @@ sambaNextUserRid: ${sambaNextUserRid}
 add: sambaNextUserRid
 sambaNextUserRid: ${sambaNextUserRid_new}
 EOF
+echo "INFO: Update sambaNextUserRid on LDAP"
 ldapmodify -x  -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f update-sambaNextUserRid.ldif
 
 # Set the next UID
@@ -84,9 +87,10 @@ uidNumber: ${maxUid_next}
 add: uidNumber
 uidNumber: ${maxUid_next_new}
 EOF
+echo "INFO: Update the next uidNumber on LDAP"
 ldapmodify -x  -H ${LDAP_SERVER} -D "${BIND_DN}" -w "${BIND_PW}" -f update-next-uidNumber.ldif
 
-# Add the user to the group
+echo "INFO: Add the user to the groups"
 . ${workdir}/add_user_to_group.sh users ${1}
 . ${workdir}/add_user_to_group.sh users_local ${1}
 . ${workdir}/add_user_to_group.sh docker_local ${1}
