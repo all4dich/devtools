@@ -30,7 +30,7 @@ dn: ${USER_DN}
 changetype: add
 shadowInactive: 0
 shadowFlag: 0
-mail: ${1}@nota.ai
+mail: ${1}@${DOMAIN}
 authAuthority: ;basic;
 displayName: ${1}
 uid: ${1}
