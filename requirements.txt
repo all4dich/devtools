@@ -1,2 +1,3 @@
 python-ldap
 requests
+boto3~=1.34.96
