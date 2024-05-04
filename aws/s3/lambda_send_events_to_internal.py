@@ -47,39 +47,30 @@ def lambda_handler(event, context):
     source_ip = event_obj['Records'][0]['requestParameters']['sourceIPAddress']
 
     user_name = None
-    role_name = None
 
     user_name = get_user_name(principal_id)
-    role_name = get_role_name(principal_id)
-
-    output = {
-        'principalId': principal_id,
-        'userName': user_name,
-        'roleName': role_name,
-        'bucketName': bucket_name,
-        'filePath': file_path
-    }
-    bucket_url = f"https://{region_name}.console.aws.amazon.com/s3/buckets/{bucket_name}"
-    file_url = f"https://{region_name}.console.aws.amazon.com/s3/object/{bucket_name}?region={region_name}&bucketType=general&prefix={file_path}"
 
     msg = {
-        "channel": "#general",
-        "text": f"* S3 Url = s3://{bucket_name}/{file_path}\n"
-                + f"* Action = {action}\n"
-                + "* User = " + (user_name or role_name) + "\n"
-                + f"* Bucket Url = {bucket_url}\n"
-                + f"* File Url = {file_url}\n",
-        "icon_emoji": ":white_check_mark:"
+        "event_time": event_time,
+        "message_id": message_id,
+        "bucket_name": bucket_name,
+        "file_path": file_path,
+        "action": action,
+        "user": user_name,
+        "region_name": region_name,
+        "ip": source_ip
     }
 
     encoded_msg = json.dumps(msg).encode('utf-8')
-    resp = http.request('POST', url, body=encoded_msg)
+    resp = http.request('POST', url, body=encoded_msg, headers={'Content-Type': 'application/json'})
+
     print({
-        "message": event['Records'][0]['Sns']['Message'],
+        "message": json.dumps(msg),
         "status_code": resp.status,
         "response": resp.data
     })
+
     return {
         'statusCode': 200,
-        'body': json.dumps(output)
+        'body': json.dumps(msg)
     }
