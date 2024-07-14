@@ -3,3 +3,4 @@ requests
 boto3~=1.34.96
 sqlalchemy
 pymysql
+gitpython
