@@ -9,9 +9,18 @@ from multiprocessing import Pool
 
 Base = declarative_base()
 
+ORG = os.getenv('ORG')
+TOKEN = os.getenv('TOKEN')
+DAYS = os.getenv('DAYS', 1)
+DB_HOST = os.getenv('DEV_DB_HOST')
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+REPO_TABLE = os.getenv('REPO_TABLE', 'github_backup_repositories')
+TARGET_DIR = os.getenv('TARGET_DIR')
+
 
 class GithubBackupRepositories(Base):
-    __tablename__ = 'github_backup_repositories'
+    __tablename__ = REPO_TABLE
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     repo_id = Column(Integer, unique=True, nullable=False)
@@ -25,16 +34,10 @@ class GithubBackupRepositories(Base):
     pushed_at = Column(DateTime, nullable=False)
 
 
-ORG = os.getenv('ORG')
-TOKEN = os.getenv('TOKEN')
-DAYS = os.getenv('DAYS', 1)
-DB_USER = os.getenv('DB_USER')
-DB_PASSWORD = os.getenv('DB_PASSWORD')
-TARGET_DIR = os.getenv('TARGET_DIR')
 now = datetime.now(timezone.utc)
 yesterday = now - timedelta(days=int(DAYS))
 
-engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@10.169.10.12/nota-infra")
+engine = create_engine(f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/nota-infra")
 Session = sessionmaker(bind=engine)
 
 

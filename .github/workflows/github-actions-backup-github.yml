@@ -1,0 +1,41 @@
+name: Backup Github nota-github
+run-name: Backup Github nota-github
+on:
+#  schedule:
+#    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+        org_name:
+            description: 'Set Github organization name'
+            required: true
+            default: 'nota-github'
+        days:
+          description: 'Set days to backup'
+          required: true
+          default: '1'
+        target_dir:
+          description: 'Set GitHub repository backup directory'
+          required: true
+          default: '/data/home/user/program/gerrit/git'
+        repo_table:
+          description: 'Set database table name for backup repositories'
+          required: true
+          default: 'github_backup_repositories'
+env:
+  DB_HOST: ${{ vars.DEV_DB_HOST }}
+  DB_USER: ${{ secrets.DB_ADMIN_USERNAME_12 }}
+  DB_PASSWORD: ${{ secrets.DB_ADMIN_PASSWORD_12 }}
+  TOKEN: ${{ secrets.TOKEN }}
+  ORG: ${{ inputs.org_name || 'nota-github' }}
+  DAYS: ${{ inputs.days || '1' }}
+  TARGET_DIR: ${{ inputs.target_dir || '/data/home/user/program/gerrit/git' }}
+  REPO_TABLE: ${{ inputs.repo_table || 'github_backup_repositories' }}
+jobs:
+  backup-github-repos:
+    runs-on: nota-infra-manager
+    environment: backup-github-github
+    steps:
+      - run: echo "🖥️ Run program"
+      - run: pwd
+      - run: which python3
+      - run: /usr/local/python-3.9.16/bin/python3 /data/home/user/workspace/devtools/github/backup-github-with-org.py
