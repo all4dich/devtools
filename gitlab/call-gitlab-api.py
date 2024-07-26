@@ -1,7 +1,9 @@
 import requests
 import os
 import argparse
+import logging
 
+logging.basicConfig(level=logging.INFO)
 arg_parser = argparse.ArgumentParser(description='Call GitLab API')
 arg_parser.add_argument('--gitlab-token', required=True, help='GitLab token')
 arg_parser.add_argument('--gitlab-url', required=True, help='GitLab URL')
@@ -39,14 +41,18 @@ def get_namespace_id(org_name: str):
 def create_project_repo(org_name: str, repo_name: str):
     url = f"{GITLAB_URL}/api/v4/projects"
     headers = {"Authorization": f"Bearer {GITLAB_TOKEN}"}
+    # Get Namespace ID
+    namespace_id = get_namespace_id(org_name)
+    # Prepare data to create project
     data = {
         "name": repo_name,
         "description": "This is a project",
         "path": repo_name,
-        "namespace_id": get_namespace_id(org_name),
+        "namespace_id": namespace_id,
         "initialize_with_readme": "false",
         "visibility": "private"
     }
+    # Create project
     response = requests.post(url, headers=headers, data=data, verify=SSL_CERT_VERIFY)
     print(response.json())
     print(response.status_code)
@@ -57,6 +63,7 @@ def get_projects_list(per_page: int = 100):
     url = f"{GITLAB_URL}/api/v4/projects?per_page={per_page}"
     headers = {"PRIVATE-TOKEN": f"{GITLAB_TOKEN}"}
     response = requests.get(url, headers=headers, verify=SSL_CERT_VERIFY)
+    # Check if response is empty or not and get all projects
     while len(response.json()) > 0:
         for project in response.json():
             id = project["id"]
@@ -65,9 +72,12 @@ def get_projects_list(per_page: int = 100):
             web_url = project["web_url"]
             projects[path_with_namespace] = {"id": id, "name": name, "path_with_namespace": path_with_namespace,
                                              "web_url": web_url}
+        # Check if there is next page or not
         if "next" not in response.links:
+            # If there is no next page then break the loop
             break
         else:
+            # If there is next page then get the next page URL and get the next page
             url = response.links["next"]["url"]
             response = requests.get(url, headers=headers, verify=SSL_CERT_VERIFY)
     return projects
