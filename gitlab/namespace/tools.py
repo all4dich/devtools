@@ -1,8 +1,10 @@
 import os
 import requests
 import logging
+import json
 
 logging.basicConfig(level=logging.INFO)
+
 
 def get_ns_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
@@ -30,7 +32,73 @@ def get_groups_list():
         full_path = group["full_path"]
         full_name = group["full_name"]
         web_url = group["web_url"]
-        logging.info(f"Group ID: {id}, Name: {name}, Path: {path}, Full Path: {full_path}, Full Name: {full_name}, Web URL: {web_url}")
+        logging.info(
+            f"Group ID: {id}, Name: {name}, Path: {path}, Full Path: {full_path}, Full Name: {full_name}, Web URL: {web_url}")
     return groups_list
+
+
+def get_ns_id(ns_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/namespaces"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    ns_id = ""
+    for ns in response.json():
+        if ns["name"] == ns_name:
+            ns_id = ns["id"]
+            break
+    return ns_id
+
+
+def get_group_id(group_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/groups/"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    group_id = ""
+    for group in response.json():
+        if group["name"] == group_name:
+            group_id = group["id"]
+            break
+    return group_id
+
+
+def get_user_id(user_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/users"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    user_id = ""
+    for user in response.json():
+        if user["username"] == user_name:
+            user_id = user["id"]
+            logging.info(f"Found! = User ID: {user_id}, User Name: {user_name}")
+            break
+    return user_id
+
+
+def get_user_groups(user_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    # Get User Id
+    user_id = get_user_id(user_name)
+    if user_id == "":
+        logging.error(f"User not found! = User Name: {user_name}")
+        return []
+    # Get User Memberships: Namepace/Project
+    url = f"{GITLAB_URL}api/v4/users/{user_id}/memberships"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    memberships = response.json()
+    groups = []
+    for membership in memberships:
+        source_id = membership["source_id"]
+        source_name = membership["source_name"]
+        source_type = membership["source_type"]
+        if source_type == "Namespace": # Namespace is a group on Gitlab web page.
+            logging.info(f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
+            group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            groups.append(group_info.json())
+    return groups
+
 
 
