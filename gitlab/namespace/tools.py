@@ -94,12 +94,13 @@ def get_user_groups(user_name):
         source_id = membership["source_id"]
         source_name = membership["source_name"]
         source_type = membership["source_type"]
-        if source_type == "Namespace": # Namespace is a group on Gitlab web page.
-            logging.info(f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
-            group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+        if source_type == "Namespace":  # Namespace is a group on Gitlab web page.
+            logging.info(
+                f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
+            group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
+                                      headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
             groups.append(group_info.json())
     return groups
-
 
 
 def get_group_members(group_name):
@@ -112,6 +113,83 @@ def get_group_members(group_name):
         return []
     # Get Group Members
     url = f"{GITLAB_URL}api/v4/groups/{group_id}/members/all?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    members = response.json()
+    users = []
+    while len(members) > 0:
+        for member in members:
+            user_id = member["id"]
+            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            users.append(user_info.json())
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            members = response.json()
+    return users
+
+
+def get_project_lists():
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/projects?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    projects = []
+    while len(response.json()) > 0:
+        for project in response.json():
+            id = project["id"]
+            name = project["name"]
+            path_with_namespace = project["path_with_namespace"]
+            web_url = project["web_url"]
+            projects.append(project)
+            logging.info(
+                f"Project ID: {id}, Name: {name}, Path with Namespace: {path_with_namespace}, Web URL: {web_url}")
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+
+    return projects
+
+
+def get_project_id(project_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/projects?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    project_id = ""
+    while len(response.json()) > 0:
+        for project in response.json():
+            if project["path_with_namespace"] == project_name:
+                project_id = project["id"]
+                break
+        if project_id != "":
+            break
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    return project_id
+
+
+def get_project_info(project_id):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/projects/{project_id}"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    project_info = response.json()
+    logging.info(
+        f"Project ID: {project_info['id']}, Name: {project_info['name']}, Path with Namespace: {project_info['path_with_namespace']}, Web URL: {project_info['web_url']}")
+    return project_info
+
+
+def get_project_members(project_id):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/projects/{project_id}/members/all?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
     members = response.json()
     users = []
