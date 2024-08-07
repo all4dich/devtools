@@ -21,59 +21,95 @@ def get_ns_list():
 def get_groups_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
-    url = f"{GITLAB_URL}api/v4/groups/"
+    url = f"{GITLAB_URL}api/v4/groups/?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
     print(response.status_code)
     groups_list = response.json()
-    for group in groups_list:
-        id = group["id"]
-        name = group["name"]
-        path = group["path"]
-        full_path = group["full_path"]
-        full_name = group["full_name"]
-        web_url = group["web_url"]
-        logging.info(
-            f"Group ID: {id}, Name: {name}, Path: {path}, Full Path: {full_path}, Full Name: {full_name}, Web URL: {web_url}")
+    while len(groups_list) > 0 and response.status_code == 200:
+        for group in groups_list:
+            id = group["id"]
+            name = group["name"]
+            path = group["path"]
+            full_path = group["full_path"]
+            full_name = group["full_name"]
+            web_url = group["web_url"]
+            logging.info(
+                f"Group ID: {id}, Name: {name}, Path: {path}, Full Path: {full_path}, Full Name: {full_name}, Web URL: {web_url}")
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            groups_list = response.json()
     return groups_list
 
 
 def get_ns_id(ns_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
-    url = f"{GITLAB_URL}api/v4/namespaces"
+    url = f"{GITLAB_URL}api/v4/namespaces?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    namespaces = response.json()
     ns_id = ""
-    for ns in response.json():
-        if ns["name"] == ns_name:
-            ns_id = ns["id"]
+    while len(namespaces) > 0 and response.status_code == 200:
+        for ns in namespaces:
+            if ns["name"] == ns_name:
+                ns_id = ns["id"]
+                break
+        if ns_id != "":
             break
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            namespaces = response.json()
     return ns_id
 
 
 def get_group_id(group_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
-    url = f"{GITLAB_URL}api/v4/groups/"
+    url = f"{GITLAB_URL}api/v4/groups/?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    groups = response.json()
     group_id = ""
-    for group in response.json():
-        if group["name"] == group_name:
-            group_id = group["id"]
+    while len(groups) > 0 and response.status_code == 200:
+        for group in groups:
+            if group["name"] == group_name:
+                group_id = group["id"]
+                break
+        if group_id != "":
             break
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            groups = response.json()
     return group_id
 
 
 def get_user_id(user_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
-    url = f"{GITLAB_URL}api/v4/users"
+    url = f"{GITLAB_URL}api/v4/users?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    users = response.json()
     user_id = ""
-    for user in response.json():
-        if user["username"] == user_name:
-            user_id = user["id"]
-            logging.info(f"Found! = User ID: {user_id}, User Name: {user_name}")
+    while len(users) > 0 and response.status_code == 200:
+        for user in users:
+            if user["username"] == user_name:
+                user_id = user["id"]
+                break
+        if user_id != "":
             break
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            users = response.json()
     return user_id
 
 
@@ -86,20 +122,21 @@ def get_user_groups(user_name):
         logging.error(f"User not found! = User Name: {user_name}")
         return []
     # Get User Memberships: Namepace/Project
-    url = f"{GITLAB_URL}api/v4/users/{user_id}/memberships"
+    url = f"{GITLAB_URL}api/v4/users/{user_id}/memberships?per_page=100"
     response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
     memberships = response.json()
     groups = []
-    for membership in memberships:
-        source_id = membership["source_id"]
-        source_name = membership["source_name"]
-        source_type = membership["source_type"]
-        if source_type == "Namespace":  # Namespace is a group on Gitlab web page.
-            logging.info(
-                f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
-            group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
-                                      headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
-            groups.append(group_info.json())
+    while len(memberships) > 0 and response.status_code == 200:
+        for membership in memberships:
+            source_id = membership["source_id"]
+            source_name = membership["source_name"]
+            source_type = membership["source_type"]
+            if source_type == "Namespace":  # Namespace is a group on Gitlab web page.
+                logging.info(
+                    f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
+                group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
+                                          headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+                groups.append(group_info.json())
     return groups
 
 
