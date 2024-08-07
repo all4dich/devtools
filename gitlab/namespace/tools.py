@@ -102,3 +102,28 @@ def get_user_groups(user_name):
 
 
 
+def get_group_members(group_name):
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    # Get Group Id
+    group_id = get_group_id(group_name)
+    if group_id == "":
+        logging.error(f"Group not found! = Group Name: {group_name}")
+        return []
+    # Get Group Members
+    url = f"{GITLAB_URL}api/v4/groups/{group_id}/members/all?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    members = response.json()
+    users = []
+    while len(members) > 0:
+        for member in members:
+            user_id = member["id"]
+            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            users.append(user_info.json())
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            members = response.json()
+    return users
