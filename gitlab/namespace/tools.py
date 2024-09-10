@@ -5,12 +5,16 @@ import json
 
 logging.basicConfig(level=logging.INFO)
 
+SSL_CERT_VERIFY: bool = os.getenv("SSL_CERT_VERIFY", True)
+if type(SSL_CERT_VERIFY) == str:
+    SSL_CERT_VERIFY = eval(SSL_CERT_VERIFY)
+
 
 def get_ns_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/namespaces"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     print(response.status_code)
     ns_list = response.json()
     for ns in ns_list:
@@ -22,7 +26,7 @@ def get_groups_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/groups/?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     print(response.status_code)
     groups_list = response.json()
     while len(groups_list) > 0 and response.status_code == 200:
@@ -39,7 +43,7 @@ def get_groups_list():
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             groups_list = response.json()
     return groups_list
 
@@ -48,7 +52,7 @@ def get_ns_id(ns_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/namespaces?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     namespaces = response.json()
     ns_id = ""
     while len(namespaces) > 0 and response.status_code == 200:
@@ -62,7 +66,7 @@ def get_ns_id(ns_name):
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             namespaces = response.json()
     return ns_id
 
@@ -71,7 +75,7 @@ def get_group_id(group_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/groups/?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     groups = response.json()
     group_id = ""
     while len(groups) > 0 and response.status_code == 200:
@@ -85,7 +89,7 @@ def get_group_id(group_name):
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             groups = response.json()
     return group_id
 
@@ -94,7 +98,7 @@ def get_user_id(user_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/users?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     users = response.json()
     user_id = ""
     while len(users) > 0 and response.status_code == 200:
@@ -108,7 +112,7 @@ def get_user_id(user_name):
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             users = response.json()
     return user_id
 
@@ -123,7 +127,7 @@ def get_user_groups(user_name):
         return []
     # Get User Memberships: Namepace/Project
     url = f"{GITLAB_URL}api/v4/users/{user_id}/memberships?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     memberships = response.json()
     groups = []
     while len(memberships) > 0 and response.status_code == 200:
@@ -135,7 +139,7 @@ def get_user_groups(user_name):
                 logging.info(
                     f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
                 group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
-                                          headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+                                          headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
                 groups.append(group_info.json())
     return groups
 
@@ -150,19 +154,20 @@ def get_group_members(group_name):
         return []
     # Get Group Members
     url = f"{GITLAB_URL}api/v4/groups/{group_id}/members/all?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     members = response.json()
     users = []
     while len(members) > 0:
         for member in members:
             user_id = member["id"]
-            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN},
+                                     verify=SSL_CERT_VERIFY)
             users.append(user_info.json())
         if "next" not in response.links:
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             members = response.json()
     return users
 
@@ -171,7 +176,7 @@ def get_project_lists():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/projects?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=False)
     projects = []
     while len(response.json()) > 0:
         for project in response.json():
@@ -186,7 +191,7 @@ def get_project_lists():
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
 
     return projects
 
@@ -195,7 +200,7 @@ def get_project_id(project_name):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/projects?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     project_id = ""
     while len(response.json()) > 0:
         for project in response.json():
@@ -208,7 +213,7 @@ def get_project_id(project_name):
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     return project_id
 
 
@@ -216,7 +221,7 @@ def get_project_info(project_id):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/projects/{project_id}"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=False)
     project_info = response.json()
     logging.info(
         f"Project ID: {project_info['id']}, Name: {project_info['name']}, Path with Namespace: {project_info['path_with_namespace']}, Web URL: {project_info['web_url']}")
@@ -227,18 +232,19 @@ def get_project_members(project_id):
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
     url = f"{GITLAB_URL}api/v4/projects/{project_id}/members/all?per_page=100"
-    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     members = response.json()
     users = []
     while len(members) > 0:
         for member in members:
             user_id = member["id"]
-            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            user_info = requests.get(f"{GITLAB_URL}api/v4/users/{user_id}", headers={"PRIVATE-TOKEN": GITLAB_TOKEN},
+                                     verify=SSL_CERT_VERIFY)
             users.append(user_info.json())
         if "next" not in response.links:
             break
         else:
             url = response.links["next"]["url"]
-            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN})
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             members = response.json()
     return users
