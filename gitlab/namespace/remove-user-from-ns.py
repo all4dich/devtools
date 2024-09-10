@@ -1,5 +1,5 @@
 import os
-from gitlab.namespace.tools import remove_user_from_ns, add_user_to_ns, update_user_access_level
+from gitlab.namespace.tools import remove_user_from_ns
 import argparse
 import logging
 

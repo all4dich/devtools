@@ -10,6 +10,34 @@ if type(SSL_CERT_VERIFY) == str:
     SSL_CERT_VERIFY = eval(SSL_CERT_VERIFY)
 
 
+def get_access_level_name(access_level_id):
+    access_level_id = int(access_level_id)
+    access_level_name = ""
+    # Access Level
+    # 10 => Guest access
+    # 20 => Reporter access
+    # 30 => Developer access
+    # 40 => Maintainer access
+    # 50 => Owner access
+    access_levels = {10: "guest", 20: "reporter", 30: "developer", 40: "maintainer", 50: "owner"}
+    if access_level_id in access_levels:
+        access_level_name = access_levels[access_level_id]
+    return access_level_name
+
+def get_access_level_id(access_level_name):
+    access_level = access_level_name.lower()
+    access_level_id = 0
+    # Access Level
+    # 10 => Guest access
+    # 20 => Reporter access
+    # 30 => Developer access
+    # 40 => Maintainer access
+    # 50 => Owner access
+    access_levels_ids = {"guest": 10, "reporter": 20, "developer": 30, "maintainer": 40, "owner": 50}
+    if access_level in access_levels_ids:
+        access_level_id = access_levels_ids[access_level]
+    return access_level_id
+
 def get_ns_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
     GITLAB_URL = os.environ["GITLAB_URL"]
@@ -261,7 +289,9 @@ def get_users_in_ns(ns_name):
     while len(member_list) > 0 and response.status_code == 200:
         for member in member_list:
             try:
-                print(ns_name, member["username"], member["email"], member["access_level"])
+                #print(ns_name, member["username"], member["email"], member["access_level"])
+                access_level_name = get_access_level_name(member["access_level"])
+                logging.info(f"Namespace: {ns_name}, User Name: {member['username']}, Email: {member['email']}, Access Level: {access_level_name}")
             except TypeError:
                 logging.error("Cannot get member info")
                 logging.error(member)
@@ -271,12 +301,14 @@ def get_users_in_ns(ns_name):
             url = response.links["next"]["url"]
             response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             member_list.extend(response)
+    return member_list
 
 
-def add_user_to_ns(ns_name, user_name, access_level=40):
+def add_user_to_ns(ns_name, user_name, access_level_name="Guest"):
     logging.info("Adding user to namespace")
     ns_id = get_ns_id(ns_name)
     user_id = get_user_id(user_name)
+    access_level = get_access_level_id(access_level_name)
     logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
     logging.info(f"User ID: {user_id}, User Name: {user_name}")
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
@@ -306,10 +338,11 @@ def remove_user_from_ns(ns_name, user_name):
     logging.info(response.status_code)
 
 
-def update_user_access_level(ns_name, user_name, access_level):
+def update_user_access_level(ns_name, user_name, access_level_name):
     logging.info("Updating user access level")
     ns_id = get_ns_id(ns_name)
     user_id = get_user_id(user_name)
+    access_level = get_access_level_id(access_level_name)
     logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
     logging.info(f"User ID: {user_id}, User Name: {user_name}")
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
