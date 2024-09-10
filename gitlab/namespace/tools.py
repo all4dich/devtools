@@ -248,3 +248,76 @@ def get_project_members(project_id):
             response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             members = response.json()
     return users
+
+def get_users_in_ns(ns_name):
+    logging.info("Getting users in namespace")
+    ns_id = get_ns_id(ns_name)
+    logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/groups/{ns_id}/members?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+    member_list = response.json()
+    while len(member_list) > 0 and response.status_code == 200:
+        for member in member_list:
+            try:
+                print(ns_name, member["username"], member["email"], member["access_level"])
+            except TypeError:
+                logging.error("Cannot get member info")
+                logging.error(member)
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+            member_list.extend(response)
+
+
+def add_user_to_ns(ns_name, user_name, access_level=40):
+    logging.info("Adding user to namespace")
+    ns_id = get_ns_id(ns_name)
+    user_id = get_user_id(user_name)
+    logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
+    logging.info(f"User ID: {user_id}, User Name: {user_name}")
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/groups/{ns_id}/members"
+    data = {
+        "username": user_name,
+        "user_id": user_id,
+        "access_level": access_level
+    }
+    response = requests.post(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, data=data, verify=SSL_CERT_VERIFY)
+    logging.info(response.text)
+    logging.info(response.status_code)
+
+
+def remove_user_from_ns(ns_name, user_name):
+    logging.info("Removing user from namespace")
+    ns_id = get_ns_id(ns_name)
+    user_id = get_user_id(user_name)
+    logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
+    logging.info(f"User ID: {user_id}, User Name: {user_name}")
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/groups/{ns_id}/members/{user_id}"
+    response = requests.delete(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+    logging.info(response.text)
+    logging.info(response.status_code)
+
+
+def update_user_access_level(ns_name, user_name, access_level):
+    logging.info("Updating user access level")
+    ns_id = get_ns_id(ns_name)
+    user_id = get_user_id(user_name)
+    logging.info(f"Namespace ID: {ns_id}, Namespace Name: {ns_name}")
+    logging.info(f"User ID: {user_id}, User Name: {user_name}")
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/groups/{ns_id}/members/{user_id}"
+    data = {
+        "access_level": access_level
+    }
+    response = requests.put(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, data=data, verify=SSL_CERT_VERIFY)
+    logging.info(response.text)
+    logging.info(response.status_code)
