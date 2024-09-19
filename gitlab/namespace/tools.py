@@ -24,6 +24,7 @@ def get_access_level_name(access_level_id):
         access_level_name = access_levels[access_level_id]
     return access_level_name
 
+
 def get_access_level_id(access_level_name):
     access_level = access_level_name.lower()
     access_level_id = 0
@@ -37,6 +38,7 @@ def get_access_level_id(access_level_name):
     if access_level in access_levels_ids:
         access_level_id = access_levels_ids[access_level]
     return access_level_id
+
 
 def get_ns_list():
     GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
@@ -277,6 +279,7 @@ def get_project_members(project_id):
             members = response.json()
     return users
 
+
 def get_users_in_ns(ns_name):
     logging.info("Getting users in namespace")
     ns_id = get_ns_id(ns_name)
@@ -289,9 +292,10 @@ def get_users_in_ns(ns_name):
     while len(member_list) > 0 and response.status_code == 200:
         for member in member_list:
             try:
-                #print(ns_name, member["username"], member["email"], member["access_level"])
+                # print(ns_name, member["username"], member["email"], member["access_level"])
                 access_level_name = get_access_level_name(member["access_level"])
-                logging.info(f"Namespace: {ns_name}, User Name: {member['username']}, Email: {member['email']}, Access Level: {access_level_name}")
+                logging.info(
+                    f"Namespace: {ns_name}, User Name: {member['username']}, Email: {member['email']}, Access Level: {access_level_name}")
             except TypeError:
                 logging.error("Cannot get member info")
                 logging.error(member)
@@ -302,6 +306,30 @@ def get_users_in_ns(ns_name):
             response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
             member_list.extend(response)
     return member_list
+
+
+def get_users(search=None):
+    logging.info(f"Getting users with {search}")
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    url = f"{GITLAB_URL}api/v4/users?per_page=100"
+    if search is not None:
+        url = f"{url}&search={search}"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+    users = response.json()
+    users_output = []
+    while len(users) > 0 and response.status_code == 200:
+        for user in users:
+            logging.debug(
+                f"User ID: {user['id']}, User Name: {user['name']}, Username: {user['username']}, Email: {user['email']}")
+            users_output.append(user)
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+            users.extend(response.json())
+    return users_output
 
 
 def add_user_to_ns(ns_name, user_name, access_level_name="Guest"):
