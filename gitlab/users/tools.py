@@ -39,3 +39,23 @@ def delete_user(user_name: str, hard_delete: bool = True) -> object:
     response = requests.delete(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
     logging.info(f"Status: {response.status_code}, User deleted: {user_name}, ")
 
+
+def get_all_users() -> object:
+    GITLAB_URL = os.environ["GITLAB_URL"]
+    GITLAB_TOKEN = os.environ["GITLAB_TOKEN"]
+    url = f"{GITLAB_URL}/api/v4/users?per_page=100"
+    response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+    users_total = []
+    users = response.json()
+    while len(users) > 0:
+        for user in users:
+            logging.debug(f"User Name: {user['name']}, Username: {user['username']}, Email: {user['email']}")
+            users_total.append(user)
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+            users = response.json()
+    return users_total
+

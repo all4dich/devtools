@@ -161,16 +161,19 @@ def get_user_groups(user_name):
     memberships = response.json()
     groups = []
     while len(memberships) > 0 and response.status_code == 200:
-        for membership in memberships:
-            source_id = membership["source_id"]
-            source_name = membership["source_name"]
-            source_type = membership["source_type"]
-            if source_type == "Namespace":  # Namespace is a group on Gitlab web page.
-                logging.info(
-                    f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
-                group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
-                                          headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
-                groups.append(group_info.json())
+        groups.append(memberships)
+        if "next" not in response.links:
+            break
+        else:
+            url = response.links["next"]["url"]
+            response = requests.get(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+            memberships = response.json()
+        #    if source_type == "Namespace":  # Namespace is a group on Gitlab web page.
+        #        logging.info(
+        #            f"User ID: {user_id}, User Name: {user_name}, Group ID: {source_id}, Group Name: {source_name}")
+        #        group_info = requests.get(f"{GITLAB_URL}api/v4/namespaces/{source_id}",
+        #                                  headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, verify=SSL_CERT_VERIFY)
+        #        groups.append(group_info.json())
     return groups
 
 
@@ -382,3 +385,7 @@ def update_user_access_level(ns_name, user_name, access_level_name):
     response = requests.put(url, headers={"PRIVATE-TOKEN": GITLAB_TOKEN}, data=data, verify=SSL_CERT_VERIFY)
     logging.info(response.text)
     logging.info(response.status_code)
+
+
+def get_test(user_name):
+    print(user_name)
