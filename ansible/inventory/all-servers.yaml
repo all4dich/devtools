@@ -1,0 +1,10 @@
+all:
+  children:
+    home:
+      hosts:
+        sunjoo-rbp5:
+          ansible_host: 10.0.0.35
+  vars:
+    ansible_port: 22
+    ansible_user: ubuntu
+    ansible_python_interpreter: python3

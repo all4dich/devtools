@@ -1,0 +1,29 @@
+- hosts: all
+  tasks:
+#    - name: Import the Datadog Agent role from the Datadog collection
+#      import_role:
+#        name: datadog.dd.agent
+    - name: Download python latest image
+      tags:
+        - docker
+      community.docker.docker_image:
+        name: python
+        source: pull
+    - name: Download ubuntu latest image
+      tags:
+        - docker
+      community.docker.docker_image:
+        name: ubuntu
+        source: pull
+    - name: Install btop
+      tags:
+        - apt
+        - pkg
+      apt:
+        pkg:
+          - btop
+        state: latest
+        update_cache: true
+  vars:
+    datadog_api_key: "30a2b5b66338edada139a1f816d466d3"
+    datadog_site: "us5.datadoghq.com"
