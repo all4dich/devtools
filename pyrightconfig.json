@@ -1,0 +1,7 @@
+{
+  "include": ["src", "tests", "lib"],
+  "extraPaths": ["src", "tests", "lib"],
+  "venvPath": "/Users/sunjoo/program/venv",
+  "venv": "env"
+}
+
