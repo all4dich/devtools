@@ -1,6 +1,13 @@
 #!/bin/bash
 
-INSTANCE_ID="8967329651927190240"
+DEFAULT_INSTANCE_ID="8967329651927190240"
+
+# Check if the first argument is provided
+if [ -n "$1" ]; then
+    INSTANCE_ID="$1"
+else
+    INSTANCE_ID="$DEFAULT_INSTANCE_ID"
+fi
 
 echo "INFO: Connecting to GCP k8s worker."
 echo "INFO: Attempting to find instance with ID: ${INSTANCE_ID}"

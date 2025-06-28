@@ -1,9 +1,15 @@
 #!/bin/bash
-INSTANCE_ID="i-0be712a4a19e8b495"
+DEFAULT_INSTANCE_ID="i-0be712a4a19e8b495"
 REGION_NAME="ap-northeast-2"
 
+# Check if the first argument is provided
+if [ -n "$1" ]; then
+    INSTANCE_ID="$1"
+else
+    INSTANCE_ID="$DEFAULT_INSTANCE_ID"
+fi
 
-echo "Starting instance..."
+echo "Starting instance... ${INSTANCE_ID}"
 aws ec2 start-instances --instance-ids ${INSTANCE_ID} --region ${REGION_NAME}
 #echo "Waiting for instance to enter 'running' state..."
 aws ec2 wait instance-running --instance-ids ${INSTANCE_ID} --region ${REGION_NAME}
