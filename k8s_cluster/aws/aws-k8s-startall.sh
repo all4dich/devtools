@@ -9,5 +9,5 @@ REGION_NAME="ap-northeast-2"
 IFS=' '
 INSTANCE_ID="${INSTANCE_IDS[*]}"
 echo "Stop instances..."
-aws ec2 stop-instances --instance-ids ${INSTANCE_ID} --region ${REGION_NAME}
+aws ec2 start-instances --instance-ids ${INSTANCE_ID} --region ${REGION_NAME}
 set +x
