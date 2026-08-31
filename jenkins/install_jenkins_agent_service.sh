@@ -131,9 +131,20 @@ echo ">> Creating directories..."
 install -d -o "$RUN_USER" -m 0755 "$INSTALL_DIR"
 install -d -o "$RUN_USER" -m 0755 "$WORKDIR"
 
-echo ">> Downloading agent.jar from ${JENKINS_URL_NOSLASH}/jnlpJars/agent.jar ..."
-curl -fsSL -o "$AGENT_JAR" "${JENKINS_URL_NOSLASH}/jnlpJars/agent.jar" \
-    || die "Failed to download agent.jar."
+JAR_URL="${JENKINS_URL_NOSLASH}/jnlpJars/agent.jar"
+echo ">> Downloading agent.jar from ${JAR_URL} ..."
+if ! curl -fsSL -o "$AGENT_JAR" "$JAR_URL"; then
+    # Some deployments (e.g. nginx behind TLS) 301-redirect the http URL back to
+    # itself, causing an infinite redirect loop over plain http. Retry over https.
+    if [[ "$JAR_URL" == http://* ]]; then
+        JAR_URL_HTTPS="https://${JAR_URL#http://}"
+        echo ">> http download failed; retrying over https: ${JAR_URL_HTTPS} ..."
+        curl -fsSL -o "$AGENT_JAR" "$JAR_URL_HTTPS" \
+            || die "Failed to download agent.jar (tried http and https)."
+    else
+        die "Failed to download agent.jar."
+    fi
+fi
 chown "$RUN_USER" "$AGENT_JAR"
 
 # --------------------------------------------------------------------------
