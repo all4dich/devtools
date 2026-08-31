@@ -26,7 +26,9 @@ RUN_USER="root"
 WORKDIR=""                       # default computed later: <user-home>/.jenkins_work
 SERVICE_NAME=""                  # default computed later: jenkins-agent-<name>
 INSTALL_DIR=""                   # default computed later: <workdir>
+JAVA_BIN=""                      # default computed later: auto-detected java >= 17
 ENABLE_NOW="yes"
+MIN_JAVA=17                      # agent.jar requires Java 17+
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -52,6 +54,8 @@ Options:
                             (default: <user-home>/.jenkins_work)
   -d, --install-dir <dir>   Directory to download agent.jar into.
                             (default: same as workdir)
+  -j, --java <path>         Path to the java binary to run the agent with.
+                            (default: auto-detect a Java >= ${MIN_JAVA})
   -S, --service-name <name> systemd service unit name (without .service).
                             (default: jenkins-agent-<agent-name>)
       --no-start            Install the unit but do not enable/start it.
@@ -81,6 +85,7 @@ while [[ $# -gt 0 ]]; do
         -U|--user)          RUN_USER="$2";      shift 2 ;;
         -w|--workdir)       WORKDIR="$2";       shift 2 ;;
         -d|--install-dir)   INSTALL_DIR="$2";   shift 2 ;;
+        -j|--java)          JAVA_BIN="$2";      shift 2 ;;
         -S|--service-name)  SERVICE_NAME="$2";  shift 2 ;;
         --no-start)         ENABLE_NOW="no";    shift   ;;
         -h|--help)          usage; exit 0 ;;
@@ -115,10 +120,55 @@ USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 SERVICE_NAME="${SERVICE_NAME//\//-}"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 
-# java is required at runtime; warn early if it is missing.
-if ! command -v java >/dev/null 2>&1; then
-    echo "Warning: 'java' was not found in PATH. Install a JRE before starting the service." >&2
+# --------------------------------------------------------------------------
+# Resolve a suitable java binary (agent.jar requires Java >= $MIN_JAVA)
+# --------------------------------------------------------------------------
+
+# Print the major version (e.g. 11, 17, 21) of a java binary, or nothing.
+java_major() {
+    local bin="$1" ver
+    ver="$("$bin" -version 2>&1 | head -n1)" || return 1
+    # Extract the quoted version string, e.g. "17.0.9" or "1.8.0_382".
+    ver="$(printf '%s\n' "$ver" | sed -n 's/.*version "\([0-9._]*\).*/\1/p')"
+    [[ -n "$ver" ]] || return 1
+    if [[ "$ver" == 1.* ]]; then
+        # Old scheme: 1.8.0_x -> major 8
+        printf '%s\n' "$ver" | cut -d. -f2
+    else
+        printf '%s\n' "$ver" | cut -d. -f1
+    fi
+}
+
+if [[ -n "$JAVA_BIN" ]]; then
+    # User supplied a java path; validate it.
+    [[ -x "$JAVA_BIN" ]] || die "java binary not found or not executable: $JAVA_BIN"
+    JMAJ="$(java_major "$JAVA_BIN" || true)"
+    [[ -n "$JMAJ" ]] || die "Could not determine Java version of $JAVA_BIN"
+    (( JMAJ >= MIN_JAVA )) || die "$JAVA_BIN is Java $JMAJ; agent.jar requires Java >= $MIN_JAVA."
+else
+    # Auto-detect: check PATH java first, then common JVM install locations.
+    CANDIDATES=()
+    if command -v java >/dev/null 2>&1; then CANDIDATES+=("$(command -v java)"); fi
+    for j in /usr/lib/jvm/*/bin/java /opt/java/*/bin/java; do
+        [[ -x "$j" ]] && CANDIDATES+=("$j")
+    done
+
+    for j in "${CANDIDATES[@]}"; do
+        JMAJ="$(java_major "$j" || true)"
+        if [[ -n "$JMAJ" ]] && (( JMAJ >= MIN_JAVA )); then
+            JAVA_BIN="$j"
+            break
+        fi
+    done
+
+    if [[ -z "$JAVA_BIN" ]]; then
+        echo "Error: no Java >= $MIN_JAVA found. agent.jar is compiled for Java $MIN_JAVA+." >&2
+        echo "Install a JDK, e.g.:  sudo apt-get install -y openjdk-17-jre-headless" >&2
+        echo "then re-run, optionally with --java /usr/lib/jvm/java-17-openjdk-amd64/bin/java" >&2
+        exit 1
+    fi
 fi
+echo ">> Using java: $JAVA_BIN (Java $(java_major "$JAVA_BIN"))"
 
 # Normalise the Jenkins URL (strip trailing slash for building the jar URL).
 JENKINS_URL_NOSLASH="${JENKINS_URL%/}"
@@ -150,8 +200,6 @@ chown "$RUN_USER" "$AGENT_JAR"
 # --------------------------------------------------------------------------
 # Write the systemd unit
 # --------------------------------------------------------------------------
-JAVA_BIN="$(command -v java || echo /usr/bin/java)"
-
 echo ">> Writing systemd unit ${UNIT_PATH} ..."
 cat > "$UNIT_PATH" <<EOF
 [Unit]
