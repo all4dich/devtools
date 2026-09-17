@@ -18,6 +18,7 @@
 #   serial_run.sh -q -o out.log replay_ver        # log only, nothing on screen
 #   serial_run.sh -w replay_ver                   # -w = no completion marker,
 #                                                 # capture for the whole timeout
+#   serial_run.sh -h                              # show help
 #
 # Exit status:
 #   0    the console printed the completion marker
@@ -44,9 +45,15 @@
 set -u
 
 usage() {
-    cat >&2 <<USAGE
-usage: $(basename "$0") [-p PORT] [-b BAUD] [-t SECONDS] [-o LOGFILE] [-q] [-w] COMMAND [ARG...]
+    cat <<USAGE
+usage: $(basename "$0") [-h] [-p PORT] [-b BAUD] [-t SECONDS] [-o LOGFILE] [-q] [-w] COMMAND [ARG...]
 
+Send one command to a UART console and save what it prints. The command is
+typed one character at a time (preceded by a bare CR to wake the prompt); the
+reply is streamed to the screen and appended to a log file until the console
+prints its completion marker ('-> FINISHED' by default) or the timeout runs out.
+
+  -h          show this help and exit
   -p PORT     UART device (default: /dev/ttyUSB0)
   -b BAUD     baud rate (default: 115200)
   -t SECONDS  give up waiting for the completion marker after this long
@@ -57,7 +64,30 @@ usage: $(basename "$0") [-p PORT] [-b BAUD] [-t SECONDS] [-o LOGFILE] [-q] [-w] 
   -w          wait the whole timeout instead of stopping at the completion
               marker ('-> FINISHED'); for commands that never print one
   COMMAND...  the console command; several words are joined with spaces
+
+Exit status:
+  0    the console printed the completion marker
+  124  the marker did not arrive within the timeout (output is still logged)
+  130  interrupted with Ctrl-C (whatever arrived so far is logged)
+  2    bad usage
+  3    the port could not be opened or configured
+
+Env overrides (the matching flag wins when both are given):
+  PORT, BAUD, TIMEOUT, LOG, PREFIX, DONE_RE, QUIET, TYPE_DELAY, WAKE_GAP
+  (see the header comment in this script for details)
+
+Examples:
+  $(basename "$0") replay_ver                  # on /dev/ttyUSB0, log to \$HOME
+  $(basename "$0") -p /dev/ttyUSB2 replay_ver  # another port
+  $(basename "$0") -t 60 run_test 3            # allow 60s; args joined: 'run_test 3'
+  $(basename "$0") -q -o out.log replay_ver    # log only, nothing on screen
+  $(basename "$0") -w replay_ver               # no completion marker, capture the whole timeout
 USAGE
+}
+
+# Bad usage: brief usage on stderr, exit 2.
+die_usage() {
+    usage >&2
     exit 2
 }
 
@@ -71,6 +101,7 @@ QUIET="${QUIET:-0}"
 TYPE_DELAY="${TYPE_DELAY:-0.05}"
 WAKE_GAP="${WAKE_GAP:-1.0}"
 
+[ "${1:-}" = "--help" ] && { usage; exit 0; }
 while getopts ':p:b:t:o:qwh' opt; do
     case "$opt" in
         p) PORT="$OPTARG" ;;
@@ -79,13 +110,13 @@ while getopts ':p:b:t:o:qwh' opt; do
         o) LOG="$OPTARG" ;;
         q) QUIET=1 ;;
         w) DONE_RE="" ;;
-        h) usage ;;
-        :) echo "error: -$OPTARG needs a value" >&2; usage ;;
-        *) echo "error: unknown option -$OPTARG" >&2; usage ;;
+        h) usage; exit 0 ;;
+        :) echo "error: -$OPTARG needs a value" >&2; die_usage ;;
+        *) echo "error: unknown option -$OPTARG" >&2; die_usage ;;
     esac
 done
 shift $((OPTIND - 1))
-[ $# -ge 1 ] || { echo "error: no command given" >&2; usage ;}
+[ $# -ge 1 ] || { echo "error: no command given" >&2; die_usage; }
 CMD="$*"
 
 case "$TIMEOUT" in
@@ -187,7 +218,7 @@ printf '\r' >&8
 # itself does not count.
 RESULT="timeout"
 while kill -0 "$READER" 2>/dev/null; do
-    if [ -n "$DONE_RE" ] && grep -vF -- "$CMD" "$RAW" | grep -qiE -- "$DONE_RE"; then
+    if [ -n "$DONE_RE" ] && tr -d '\000\r' < "$RAW" | grep -avF -- "$CMD" | grep -aqiE -- "$DONE_RE"; then
         RESULT="finished"
         kill "$READER" 2>/dev/null
         break
