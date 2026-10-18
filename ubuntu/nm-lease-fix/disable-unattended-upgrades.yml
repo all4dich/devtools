@@ -1,0 +1,156 @@
+---
+# disable-unattended-upgrades: stop automatic package upgrades on every host.
+#
+# Why: the 2026-10-08 unattended-upgrade run reloaded dbus, dbus-daemon
+# segfaulted, and systemd stopped NetworkManager and 15 other Type=dbus
+# services as collateral. hwp-server-01 lost its DHCP address 8 days later.
+# Until the dbus reload crash is fixed fleet-wide, upgrades run by hand with
+# a planned reboot window.
+#
+# What it does, per host:
+#   - stops and disables unattended-upgrades.service
+#   - disables and masks apt-daily-upgrade.timer (the 06:xx upgrade run)
+#   - optionally disables apt-daily.timer too (package-list download only)
+#   - drops /etc/apt/apt.conf.d/99-nm-lease-fix-no-unattended with
+#     APT::Periodic::Unattended-Upgrade "0" so a package upgrade of
+#     unattended-upgrades cannot re-enable it (20auto-upgrades is untouched)
+#   - verifies the timer is inactive and the apt setting is 0
+# The package itself stays installed; re-enable with -e state=enabled.
+#
+# Run:  ansible-playbook -i inventory-all.ini disable-unattended-upgrades.yml -K
+#       ansible-playbook -i inventory-all.ini disable-unattended-upgrades.yml -K --check --diff
+#       ansible-playbook -i inventory-all.ini disable-unattended-upgrades.yml -K -e state=enabled   # revert
+
+- name: Disable unattended-upgrades on all hosts
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    # "disabled" (default) or "enabled" to revert
+    state: disabled
+    # also stop the daily package-list download; off by default so
+    # "apt list --upgradable" and the MOTD still know what is pending
+    disable_apt_daily_download: false
+
+  pre_tasks:
+    - name: Skip non-Debian hosts
+      ansible.builtin.meta: end_host
+      when: ansible_facts.os_family != "Debian"
+      tags: [always]
+
+    - name: Record timer and service state before changes
+      ansible.builtin.shell: |
+        for u in apt-daily-upgrade.timer apt-daily.timer unattended-upgrades.service; do
+          printf '%s enabled=%s active=%s\n' "$u" "$(systemctl is-enabled $u 2>/dev/null)" "$(systemctl is-active $u 2>/dev/null)"
+        done
+        apt-config dump APT::Periodic::Unattended-Upgrade APT::Periodic::Update-Package-Lists 2>/dev/null
+      register: before
+      changed_when: false
+      check_mode: false
+      tags: [always]
+
+    - name: Show state before changes
+      ansible.builtin.debug:
+        msg: "{{ before.stdout_lines }}"
+      tags: [always]
+
+  tasks:
+    # ---------------------------------------------------------- disable
+    - name: Stop and disable unattended-upgrades.service
+      ansible.builtin.systemd:
+        name: unattended-upgrades.service
+        enabled: false
+        state: stopped
+      when: state == "disabled"
+      failed_when: false   # package may not be installed on every host
+
+    - name: Disable and mask apt-daily-upgrade.timer
+      ansible.builtin.systemd:
+        name: apt-daily-upgrade.timer
+        enabled: false
+        masked: true
+        state: stopped
+      when: state == "disabled"
+
+    - name: Disable and mask apt-daily.timer (package-list download)
+      ansible.builtin.systemd:
+        name: apt-daily.timer
+        enabled: false
+        masked: true
+        state: stopped
+      when: state == "disabled" and disable_apt_daily_download
+
+    - name: Override periodic upgrades in apt configuration
+      # a 99- file wins over 20auto-upgrades and leaves that file untouched
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99-nm-lease-fix-no-unattended
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Managed by nm-lease-fix/disable-unattended-upgrades.yml.
+          // Automatic upgrades are off until the dbus reload crash
+          // (thermald policy, dbus 1.12.20) is fixed fleet-wide.
+          // Revert: ansible-playbook ... disable-unattended-upgrades.yml -e state=enabled
+          APT::Periodic::Unattended-Upgrade "0";
+          {% if disable_apt_daily_download %}
+          APT::Periodic::Update-Package-Lists "0";
+          {% endif %}
+      when: state == "disabled"
+
+    # ----------------------------------------------------------- revert
+    - name: Remove the apt override
+      ansible.builtin.file:
+        path: /etc/apt/apt.conf.d/99-nm-lease-fix-no-unattended
+        state: absent
+      when: state == "enabled"
+
+    - name: Unmask and enable the apt timers
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: false
+        enabled: true
+        state: started
+      loop: [apt-daily.timer, apt-daily-upgrade.timer]
+      when: state == "enabled"
+
+    - name: Enable unattended-upgrades.service
+      ansible.builtin.systemd:
+        name: unattended-upgrades.service
+        enabled: true
+        state: started
+      when: state == "enabled"
+      failed_when: false
+
+  post_tasks:
+    # ----------------------------------------------------------- verify
+    - name: Read timer and apt state after changes
+      ansible.builtin.shell: |
+        printf 'timer_enabled=%s timer_active=%s\n' "$(systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null)" "$(systemctl is-active apt-daily-upgrade.timer 2>/dev/null)"
+        apt-config dump APT::Periodic::Unattended-Upgrade
+      register: after
+      changed_when: false
+      check_mode: false
+
+    - name: Show state after changes
+      ansible.builtin.debug:
+        msg:
+          - "{{ 'CHECK MODE: nothing was changed, asserts skipped' if ansible_check_mode else 'applied' }}"
+          - "{{ after.stdout_lines }}"
+
+    - name: Assert automatic upgrades are off
+      ansible.builtin.assert:
+        that:
+          - "'timer_enabled=masked' in after.stdout"
+          - "'timer_active=inactive' in after.stdout"
+          - "'APT::Periodic::Unattended-Upgrade \"0\"' in after.stdout"
+        fail_msg: "unattended-upgrades still enabled on {{ inventory_hostname }}: {{ after.stdout_lines }}"
+      when: state == "disabled" and not ansible_check_mode
+
+    - name: Assert automatic upgrades are back on
+      ansible.builtin.assert:
+        that:
+          - "'timer_enabled=enabled' in after.stdout"
+          - "'APT::Periodic::Unattended-Upgrade \"0\"' not in after.stdout"
+      when: state == "enabled" and not ansible_check_mode

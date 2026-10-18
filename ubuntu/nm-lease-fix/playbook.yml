@@ -1,0 +1,257 @@
+---
+# nm-lease-fix: restore NetworkManager after the dbus reload crash and make
+# sure it is never left dead again.
+#
+# Background (hwp-server-01 outage, 2026-10-16): unattended-upgrades upgraded
+# systemd, systemd re-executed, dbus-daemon segfaulted on config reload
+# ("Unknown group power"), NetworkManager got SIGTERM and exited cleanly.
+# NetworkManager.service has Restart=on-failure, so a clean exit was never
+# restarted. Eight days later the DHCP lease expired and the kernel deleted
+# the host's IP address while the host stayed up.
+#
+# What this playbook does, per host:
+#   remediate : start dbus + NetworkManager if dead, renew DHCP leases now
+#   dropin    : NetworkManager.service drop-in with Restart=always
+#   dbus      : create the system group "power" if a dbus policy references
+#               it and it does not exist (the reload crash trigger)
+#   logind    : optional, HandlePowerKey=poweroff (off by default)
+#   verify    : assert NetworkManager and dbus active and every dynamic
+#               IPv4 address has a lifetime above nm_min_valid_lft
+#
+# Run:  ansible-playbook -i inventory.ini playbook.yml -K
+#       ansible-playbook -i inventory.ini playbook.yml -K -l rebel-hw-test-11
+#       ansible-playbook -i inventory.ini playbook.yml -K --check --diff
+#       ansible-playbook -i inventory.ini playbook.yml -K --tags verify
+
+- name: Restore NetworkManager and make it survive a dbus crash
+  hosts: nm_hosts
+  become: true
+  gather_facts: true
+
+  vars:
+    nm_dropin_dir: /etc/systemd/system/NetworkManager.service.d
+    nm_dropin_file: 10-restart-always.conf
+    nm_restart_sec: 5
+    # a dynamic address whose remaining lifetime is below this (seconds) is
+    # treated as "not renewed"; a fresh 10-day lease reports ~864000
+    nm_min_valid_lft: 80000
+    # create the "power" system group if a dbus policy file references it
+    fix_dbus_power_group: true
+    # reload dbus after the group fix to prove the crash is gone. Off by
+    # default: on an unfixed host this reload is exactly what killed
+    # NetworkManager, which is why the drop-in is installed first.
+    verify_dbus_reload: false
+    # turn a power-key press into a clean poweroff instead of a GNOME dialog
+    logind_power_key_poweroff: false
+
+  pre_tasks:
+    - name: Check whether NetworkManager is installed
+      ansible.builtin.stat:
+        path: /usr/sbin/NetworkManager
+      register: nm_binary
+      tags: [always]
+
+    - name: Skip hosts that do not use NetworkManager
+      ansible.builtin.meta: end_host
+      when: not nm_binary.stat.exists
+      tags: [always]
+
+    - name: Record NetworkManager and dbus state before changes
+      ansible.builtin.command: systemctl is-active {{ item }}
+      loop: [NetworkManager, dbus]
+      register: state_before
+      check_mode: false
+      changed_when: false
+      failed_when: false
+      tags: [always]
+
+    - name: Record dynamic IPv4 address lifetimes before changes
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip -d -4 addr show scope global | awk '/inet .*dynamic/{a=$2; d=$NF} /valid_lft/ && a {sub("sec","",$2); print d, a, $2; a=""}'
+      args:
+        executable: /bin/bash
+      register: lft_before
+      check_mode: false
+      changed_when: false
+      tags: [always]
+
+    - name: Show state before changes
+      ansible.builtin.debug:
+        msg:
+          - "NetworkManager: {{ state_before.results[0].stdout }}, dbus: {{ state_before.results[1].stdout }}"
+          - "dynamic addresses (iface addr valid_lft): {{ lft_before.stdout_lines | default([]) }}"
+      tags: [always]
+
+  tasks:
+    # ------------------------------------------------------------- dropin
+    - name: Create the drop-in directory first
+      ansible.builtin.file:
+        path: "{{ nm_dropin_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [dropin]
+
+    - name: Install NetworkManager drop-in so a clean exit is restarted
+      ansible.builtin.copy:
+        dest: "{{ nm_dropin_dir }}/{{ nm_dropin_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by nm-lease-fix. NetworkManager exits cleanly when dbus
+          # dies (status=success), and Restart=on-failure never restarts it.
+          [Service]
+          Restart=always
+          RestartSec={{ nm_restart_sec }}
+      notify: daemon-reload
+      tags: [dropin]
+
+    - name: Reload systemd now so the drop-in applies before any restart
+      ansible.builtin.meta: flush_handlers
+      tags: [dropin, remediate]
+
+    # --------------------------------------------------------------- dbus
+    - name: Find dbus policy files that reference group "power"
+      ansible.builtin.shell: grep -rl 'group="power"' /etc/dbus-1 /usr/share/dbus-1 2>/dev/null || true
+      register: dbus_power_refs
+      check_mode: false
+      changed_when: false
+      when: fix_dbus_power_group
+      tags: [dbus]
+
+    - name: Create system group "power" referenced by dbus policy
+      ansible.builtin.group:
+        name: power
+        system: true
+        state: present
+      when:
+        - fix_dbus_power_group
+        - dbus_power_refs.stdout | length > 0
+      register: power_group
+      tags: [dbus]
+
+    - name: Report dbus policy references
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'dbus policy references group power in: ' ~ dbus_power_refs.stdout_lines | join(', ')
+             if dbus_power_refs.stdout | length > 0 else 'no dbus policy references group power' }}
+      when: fix_dbus_power_group
+      tags: [dbus]
+
+    # ---------------------------------------------------------- remediate
+    - name: Ensure dbus socket and service are running
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop: [dbus.socket, dbus.service]
+      tags: [remediate]
+
+    - name: Ensure NetworkManager is enabled and running
+      ansible.builtin.systemd:
+        name: NetworkManager
+        enabled: true
+        state: started
+      register: nm_start
+      tags: [remediate]
+
+    - name: Give NetworkManager time to renew leases after a start
+      ansible.builtin.pause:
+        seconds: 8
+      when: nm_start.changed
+      tags: [remediate]
+
+    # --------------------------------------------------- dbus reload test
+    - name: Reload dbus to prove the config reload no longer crashes
+      ansible.builtin.systemd:
+        name: dbus
+        state: reloaded
+      when: verify_dbus_reload
+      tags: [dbus, never]
+
+    - name: Confirm dbus and NetworkManager survived the reload
+      ansible.builtin.command: systemctl is-active dbus NetworkManager
+      register: after_reload
+      check_mode: false
+      changed_when: false
+      when: verify_dbus_reload
+      tags: [dbus, never]
+
+    # -------------------------------------------------------------- logind
+    - name: Make the power key shut the host down cleanly
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/logind.conf
+        regexp: '^#?HandlePowerKey='
+        line: HandlePowerKey=poweroff
+      when: logind_power_key_poweroff
+      notify: restart logind
+      tags: [logind]
+
+  post_tasks:
+    # -------------------------------------------------------------- verify
+    - name: Read effective NetworkManager unit settings
+      ansible.builtin.command: systemctl show NetworkManager -p ActiveState -p Restart -p Result
+      register: nm_show
+      check_mode: false
+      changed_when: false
+      tags: [verify]
+
+    - name: Read dynamic IPv4 address lifetimes after changes
+      ansible.builtin.shell: |
+        set -o pipefail
+        ip -d -4 addr show scope global | awk '/inet .*dynamic/{a=$2; d=$NF} /valid_lft/ && a {sub("sec","",$2); print d, a, $2; a=""}'
+      args:
+        executable: /bin/bash
+      register: lft_after
+      check_mode: false
+      changed_when: false
+      retries: 5
+      delay: 5
+      until: >-
+        lft_after.stdout_lines | map('split', ' ') | map('last') | map('int')
+        | select('lt', nm_min_valid_lft) | list | length == 0
+      failed_when: false
+      tags: [verify]
+
+    - name: Show state after changes
+      ansible.builtin.debug:
+        msg:
+          - "{{ 'CHECK MODE: nothing was changed, asserts skipped' if ansible_check_mode else 'applied' }}"
+          - "{{ nm_show.stdout_lines }}"
+          - "dynamic addresses (iface addr valid_lft): {{ lft_after.stdout_lines | default([]) }}"
+      tags: [verify]
+
+    - name: Assert NetworkManager is active and set to always restart
+      ansible.builtin.assert:
+        that:
+          - "'ActiveState=active' in nm_show.stdout"
+          - "'Restart=always' in nm_show.stdout"
+        fail_msg: "NetworkManager is not active with Restart=always on {{ inventory_hostname }}: {{ nm_show.stdout_lines }}"
+      when: not ansible_check_mode
+      tags: [verify]
+
+    - name: Assert every dynamic address has a fresh lifetime
+      ansible.builtin.assert:
+        that:
+          - >-
+            lft_after.stdout_lines | map('split', ' ') | map('last') | map('int')
+            | select('lt', nm_min_valid_lft) | list | length == 0
+        fail_msg: >-
+          A dynamic address on {{ inventory_hostname }} still has a short lifetime
+          (below {{ nm_min_valid_lft }} s): {{ lft_after.stdout_lines }}.
+          NetworkManager did not renew it; check 'nmcli device status' and
+          'journalctl -u NetworkManager -n 50'.
+      when: not ansible_check_mode
+      tags: [verify]
+
+  handlers:
+    - name: daemon-reload
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: restart logind
+      ansible.builtin.systemd:
+        name: systemd-logind
+        state: restarted
