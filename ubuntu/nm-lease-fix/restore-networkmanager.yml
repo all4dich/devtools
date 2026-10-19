@@ -18,13 +18,13 @@
 #   verify    : assert NetworkManager and dbus active and every dynamic
 #               IPv4 address has a lifetime above nm_min_valid_lft
 #
-# Run:  ansible-playbook -i inventory.ini playbook.yml -K
-#       ansible-playbook -i inventory.ini playbook.yml -K -l rebel-hw-test-11
-#       ansible-playbook -i inventory.ini playbook.yml -K --check --diff
-#       ansible-playbook -i inventory.ini playbook.yml -K --tags verify
+# Run:  ansible-playbook -i inventory.ini restore-networkmanager.yml -K
+#       ansible-playbook -i inventory.ini restore-networkmanager.yml -K -l rebel-hw-test-11
+#       ansible-playbook -i inventory.ini restore-networkmanager.yml -K --check --diff
+#       ansible-playbook -i inventory.ini restore-networkmanager.yml -K --tags verify
 
 - name: Restore NetworkManager and make it survive a dbus crash
-  hosts: nm_hosts
+  hosts: "{{ lookup('env', 'ANSIBLE_HOSTS') | default('all', true) }}"
   become: true
   gather_facts: true
 

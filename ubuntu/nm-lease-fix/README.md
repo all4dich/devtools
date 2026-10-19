@@ -33,16 +33,16 @@ Ansible is not installed on hwp-server-01. Run from a workstation that has it
 
 ```bash
 # dry run with diff
-ansible-playbook -i inventory.ini playbook.yml -K --check --diff
+ansible-playbook -i inventory.ini restore-networkmanager.yml -K --check --diff
 
 # one urgent host first
-ansible-playbook -i inventory.ini playbook.yml -K -l rebel-hw-test-11.rebellions.dev
+ansible-playbook -i inventory.ini restore-networkmanager.yml -K -l rebel-hw-test-11.rebellions.dev
 
 # everything
-ansible-playbook -i inventory.ini playbook.yml -K
+ansible-playbook -i inventory.ini restore-networkmanager.yml -K
 
 # later: prove the dbus reload no longer kills anything (drop-in must be in place)
-ansible-playbook -i inventory.ini playbook.yml -K -e verify_dbus_reload=true --tags dbus
+ansible-playbook -i inventory.ini restore-networkmanager.yml -K -e verify_dbus_reload=true --tags dbus
 ```
 
 `-K` asks for the sudo password. Set `ansible_user` in `inventory.ini` to the
@@ -68,7 +68,69 @@ If the address has already expired, Ansible cannot reach the host. Log in on
 the BMC console and run `sudo systemctl start NetworkManager`, then run this
 playbook against it to install the drop-in.
 
-## disable-unattended-upgrades.yml
+## manage-ubuntu-auto-updates.yml (combined playbook)
+
+Combines `disable_ubuntu_auto_updates.yml` and `disable-unattended-upgrades.yml`.
+Requires Ubuntu with systemd and ansible-core 2.16+. Both original files remain
+available, but use this playbook for subsequent policy changes.
+
+| Option | Default | Behavior |
+|--------|---------|----------|
+| `state` | `disabled` | `disabled` blocks automatic updates; `enabled` applies an explicit enabled policy |
+| `disable_apt_daily_download` | `true` | With updates disabled, also blocks package-list refreshes; `false` enables daily list refreshes while upgrades and package predownloads stay blocked |
+| `disable_snap_auto_updates` | `true` | If Snap is installed, holds automatic refreshes indefinitely when disabled and removes the global hold when enabled; `false` leaves Snap untouched |
+| `desktop_users` | `[]` | Disables selected users' update-notifier autostart; enabled mode removes matching managed overrides; changes take effect at next login |
+| `stop_unattended_service` | `false` | Optional legacy behavior: stop/disable the unattended-upgrades shutdown helper when disabling updates |
+
+```bash
+# Preview; no target settings are changed
+ansible-playbook -i inventory-all.ini manage-ubuntu-auto-updates.yml -K --check --diff
+
+# Disable APT and Snap automation, including automatic security updates
+ansible-playbook -i inventory-all.ini manage-ubuntu-auto-updates.yml -K
+
+# Also suppress the selected desktop user's update notifier
+ansible-playbook -i inventory.ini manage-ubuntu-auto-updates.yml -K \
+  -e '{"desktop_users":["sunjoo.park"]}'
+
+# Narrow APT-only policy: keep daily package-list refreshes; leave Snap untouched
+ansible-playbook -i inventory-all.ini manage-ubuntu-auto-updates.yml -K \
+  -e '{"disable_apt_daily_download":false,"disable_snap_auto_updates":false}'
+
+# Re-enable updates and the same user's notifier
+ansible-playbook -i inventory.ini manage-ubuntu-auto-updates.yml -K \
+  -e '{"state":"enabled","desktop_users":["sunjoo.park"]}'
+```
+
+The combined playbook replaces the two original APT override files with
+`/etc/apt/apt.conf.d/99-z-managed-auto-updates`. It manages both timers and
+their underlying services, including unmasking the daily units when switching
+`disable_apt_daily_download` from `true` to `false`. Running APT services are
+allowed to finish. The shutdown helper is left alone by default when disabling
+and enabled when present in enabled mode, including after use of the older
+playbook. Errors managing installed units are not suppressed.
+
+Enabled mode is a policy change, not a restore of the previous machine state:
+it enables both APT timers and sets periodic processing, package-list refresh,
+package predownload, and unattended upgrades to `1`. It removes this playbook's
+automatic-reboot override, leaving the underlying reboot policy in effect.
+Packages are never installed or removed, so enabled mode requires an existing
+unattended-upgrades installation and suitable vendor upgrade configuration to
+actually install upgrades. Desktop overrides use the standard `~/.config`
+location; custom files are backed up before replacement, and enabled mode only
+removes files matching the managed content. Restore any earlier custom content
+from its backup if needed. Supply the same desktop users when re-enabling.
+
+Snap capability checks happen before changes. Snap policy is reasserted every
+run and deliberately reports changed. Setting `disable_snap_auto_updates=false`
+does not remove an existing hold; use enabled mode with Snap management on.
+The playbook reports APT policy and unit state before changes and verifies the
+effective policy, masks, and timer state afterward. In check mode it reads actual
+state and skips final assertions. It does not manage custom cron jobs or
+third-party update agents. Apply security updates manually while automation is
+disabled (`sudo apt update && sudo apt upgrade`; `sudo snap refresh`).
+
+## disable-unattended-upgrades.yml (original)
 
 Stops automatic package upgrades fleet-wide until the dbus reload crash is
 fixed, because every upgrade morning re-runs the chain above on any host

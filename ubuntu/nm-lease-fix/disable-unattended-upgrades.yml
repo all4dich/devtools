@@ -22,7 +22,7 @@
 #       ansible-playbook -i inventory-all.ini disable-unattended-upgrades.yml -K -e state=enabled   # revert
 
 - name: Disable unattended-upgrades on all hosts
-  hosts: all
+  hosts: "{{ lookup('env', 'ANSIBLE_HOSTS') | default('all', true) }}"
   become: true
   gather_facts: true
 

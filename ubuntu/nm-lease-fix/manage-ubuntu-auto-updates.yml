@@ -1,0 +1,338 @@
+---
+# Combined replacement for disable_ubuntu_auto_updates.yml and
+# disable-unattended-upgrades.yml. Requires ansible-core 2.16+.
+# state=enabled applies an enabled policy; it is not a prior-state restore.
+# No packages are installed or removed. Running APT transactions may finish.
+# References:
+# https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_service_module.html
+# https://snapcraft.io/docs/how-to-guides/manage-snaps/manage-updates/
+
+- name: Manage Ubuntu automatic updates and desktop notifications
+  hosts: "{{ lookup('env', 'ANSIBLE_HOSTS') | default('all', true) }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    state: disabled
+    disable_apt_daily_download: true
+    # false leaves Snap untouched, including any existing hold.
+    disable_snap_auto_updates: true
+    desktop_users: []
+    # Optional legacy behavior; this service is a shutdown helper, not a scheduler.
+    stop_unattended_service: true
+    apt_units:
+      - apt-daily.timer
+      - apt-daily.service
+      - apt-daily-upgrade.timer
+      - apt-daily-upgrade.service
+    blocked_apt_units: >-
+      {{ (['apt-daily-upgrade.timer', 'apt-daily-upgrade.service'] +
+          (['apt-daily.timer', 'apt-daily.service']
+           if disable_apt_daily_download | bool else []))
+         if state == 'disabled' else [] }}
+    notifier_override: |
+      [Desktop Entry]
+      Type=Application
+      Name=Update Notifier
+      Hidden=true
+    apt_policy_query:
+      - apt-config
+      - shell
+      - PERIODIC
+      - APT::Periodic::Enable
+      - UPGRADES
+      - APT::Periodic::Unattended-Upgrade
+      - LISTS
+      - APT::Periodic::Update-Package-Lists
+      - DOWNLOADS
+      - APT::Periodic::Download-Upgradeable-Packages
+      - REBOOT
+      - Unattended-Upgrade::Automatic-Reboot
+
+  pre_tasks:
+    - name: Require valid options and Ubuntu with systemd
+      ansible.builtin.assert:
+        that:
+          - state in ['disabled', 'enabled']
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.service_mgr == 'systemd'
+          - desktop_users is sequence
+          - desktop_users is not string
+          - desktop_users is not mapping
+        fail_msg: Requires Ubuntu/systemd, state disabled or enabled, and a list of desktop_users.
+
+    - name: Resolve desktop accounts before changing settings
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item }}"
+        fail_key: true
+      loop: "{{ desktop_users }}"
+      register: desktop_accounts
+
+    - name: Collect installed services
+      ansible.builtin.service_facts:
+
+    - name: Check whether Snap is installed
+      ansible.builtin.stat:
+        path: /usr/bin/snap
+      register: snap_binary
+      when: disable_snap_auto_updates | bool
+
+    - name: Check Snap capabilities before applying any policy
+      when:
+        - disable_snap_auto_updates | bool
+        - (snap_binary.stat | default({})).exists | default(false)
+      block:
+        - name: Read Snap refresh options
+          ansible.builtin.command:
+            argv: [/usr/bin/snap, help, refresh]
+          environment:
+            LC_ALL: C
+          register: snap_refresh_help
+          changed_when: false
+          check_mode: false
+
+        - name: Require Snap hold and unhold support
+          ansible.builtin.assert:
+            that:
+              - "'--hold' in snap_refresh_help.stdout"
+              - "'--unhold' in snap_refresh_help.stdout"
+            fail_msg: >-
+              Snap requires hold/unhold support (snapd 2.58+).
+              Upgrade snapd or pass -e '{"disable_snap_auto_updates":false}'.
+
+    - name: Read APT policy before changes
+      ansible.builtin.command:
+        argv: "{{ apt_policy_query }}"
+      register: apt_before
+      changed_when: false
+      check_mode: false
+
+    - name: Read unit state before changes and require installed APT units
+      ansible.builtin.command:
+        argv: [systemctl, show, "{{ item }}", --property=LoadState, --property=UnitFileState, --property=ActiveState]
+      loop: "{{ apt_units }}"
+      register: units_before
+      changed_when: false
+      failed_when: units_before.rc != 0 or 'LoadState=not-found' in units_before.stdout
+      check_mode: false
+
+    - name: Show state before changes
+      ansible.builtin.debug:
+        msg:
+          - "{{ apt_before.stdout_lines }}"
+          - "{{ units_before.results | map(attribute='stdout_lines') | list }}"
+
+  tasks:
+    - name: Apply explicit APT policy
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99-z-managed-auto-updates
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+        content: |
+          // Managed by manage-ubuntu-auto-updates.yml; state={{ state }}.
+          APT::Periodic::Enable "{{ '0' if state == 'disabled' and disable_apt_daily_download | bool else '1' }}";
+          APT::Periodic::Update-Package-Lists "{{ '0' if state == 'disabled' and disable_apt_daily_download | bool else '1' }}";
+          APT::Periodic::Download-Upgradeable-Packages "{{ '0' if state == 'disabled' else '1' }}";
+          APT::Periodic::Unattended-Upgrade "{{ '0' if state == 'disabled' else '1' }}";
+          {% if state == 'disabled' %}
+          Unattended-Upgrade::Automatic-Reboot "false";
+          {% endif %}
+
+    - name: Remove superseded APT overrides from both original playbooks
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/apt.conf.d/99-disable-auto-updates
+        - /etc/apt/apt.conf.d/99-nm-lease-fix-no-unattended
+
+    - name: Stop and disable blocked APT timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop: "{{ blocked_apt_units | select('search', '[.]timer$') | list }}"
+
+    # Do not stop APT services while package transactions may be in progress.
+    - name: Mask blocked APT timers and services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop: "{{ blocked_apt_units }}"
+
+    # Unmask in a separate task: systemd_service enables before unmasking.
+    - name: Unmask allowed APT timers and services
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: false
+      loop: "{{ apt_units | difference(blocked_apt_units) }}"
+
+    - name: Enable and start allowed APT timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: "{{ apt_units | difference(blocked_apt_units) | select('search', '[.]timer$') | list }}"
+
+    - name: Optionally stop the unattended-upgrades shutdown helper
+      ansible.builtin.systemd_service:
+        name: unattended-upgrades.service
+        enabled: false
+        state: stopped
+      when:
+        - state == 'disabled'
+        - stop_unattended_service | bool
+        - "'unattended-upgrades.service' in ansible_facts.services"
+
+    - name: Restore installed unattended-upgrades shutdown helper when enabling
+      when:
+        - state == 'enabled'
+        - "'unattended-upgrades.service' in ansible_facts.services"
+      block:
+        - name: Unmask unattended-upgrades shutdown helper
+          ansible.builtin.systemd_service:
+            name: unattended-upgrades.service
+            masked: false
+
+        - name: Enable and start unattended-upgrades shutdown helper
+          ansible.builtin.systemd_service:
+            name: unattended-upgrades.service
+            enabled: true
+            state: started
+
+    - name: Create selected users' autostart directories
+      ansible.builtin.file:
+        path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.config/autostart"
+        state: directory
+        owner: "{{ item.item }}"
+        group: "{{ item.ansible_facts.getent_passwd[item.item][2] }}"
+        mode: '0755'
+      loop: "{{ desktop_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: state == 'disabled'
+
+    - name: Disable selected users' update notifier at next login
+      ansible.builtin.copy:
+        dest: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.config/autostart/update-notifier.desktop"
+        owner: "{{ item.item }}"
+        group: "{{ item.ansible_facts.getent_passwd[item.item][2] }}"
+        mode: '0644'
+        backup: true
+        content: "{{ notifier_override }}"
+      loop: "{{ desktop_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: state == 'disabled'
+
+    # Remove only the exact override written here or by the original playbook.
+    - name: Locate selected users' desktop overrides when enabling
+      ansible.builtin.stat:
+        path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.config/autostart/update-notifier.desktop"
+      loop: "{{ desktop_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: notifier_files
+      when: state == 'enabled'
+
+    - name: Read existing desktop overrides
+      ansible.builtin.slurp:
+        src: "{{ item.stat.path }}"
+      loop: "{{ notifier_files.results }}"
+      loop_control:
+        label: "{{ item.item.item }}"
+      register: notifier_contents
+      when:
+        - state == 'enabled'
+        - item.stat.exists | default(false)
+
+    - name: Require desktop overrides to match managed content before removal
+      ansible.builtin.assert:
+        that:
+          - (item.content | b64decode | trim) == (notifier_override | trim)
+        fail_msg: "Desktop override {{ item.source }} differs from managed content; left unchanged."
+      loop: "{{ notifier_contents.results }}"
+      loop_control:
+        label: "{{ item.source | default('no override') }}"
+      when: item.content is defined
+
+    - name: Remove managed desktop overrides when enabling
+      ansible.builtin.file:
+        path: "{{ item.source }}"
+        state: absent
+      loop: "{{ notifier_contents.results }}"
+      loop_control:
+        label: "{{ item.source | default('no override') }}"
+      when: item.content is defined
+
+    - name: Apply Snap automatic refresh policy
+      ansible.builtin.command:
+        argv: [/usr/bin/snap, refresh, "{{ '--hold=forever' if state == 'disabled' else '--unhold' }}"]
+      changed_when: true
+      when:
+        - disable_snap_auto_updates | bool
+        - (snap_binary.stat | default({})).exists | default(false)
+        - not ansible_check_mode
+
+    - name: Show planned Snap policy in check mode
+      ansible.builtin.debug:
+        msg: "Would run: snap refresh {{ '--hold=forever' if state == 'disabled' else '--unhold' }}"
+      changed_when: true
+      when:
+        - ansible_check_mode
+        - disable_snap_auto_updates | bool
+        - (snap_binary.stat | default({})).exists | default(false)
+
+  post_tasks:
+    - name: Read effective APT policy after changes
+      ansible.builtin.command:
+        argv: "{{ apt_policy_query }}"
+      register: apt_after
+      changed_when: false
+      check_mode: false
+
+    - name: Read APT unit state after changes
+      ansible.builtin.command:
+        argv: [systemctl, show, "{{ item }}", --property=LoadState, --property=UnitFileState, --property=ActiveState]
+      loop: "{{ apt_units }}"
+      register: units_after
+      changed_when: false
+      check_mode: false
+
+    - name: Verify effective APT policy
+      ansible.builtin.assert:
+        that:
+          - "('UPGRADES=' ~ expected_upgrades) in apt_after.stdout_lines"
+          - "('DOWNLOADS=' ~ expected_upgrades) in apt_after.stdout_lines"
+          - "('PERIODIC=' ~ expected_lists) in apt_after.stdout_lines"
+          - "('LISTS=' ~ expected_lists) in apt_after.stdout_lines"
+          - "state == 'enabled' or \"REBOOT='false'\" in apt_after.stdout_lines"
+        fail_msg: "Effective APT configuration differs from requested policy: {{ apt_after.stdout }}"
+      vars:
+        expected_upgrades: "'{{ '0' if state == 'disabled' else '1' }}'"
+        expected_lists: "'{{ '0' if state == 'disabled' and disable_apt_daily_download | bool else '1' }}'"
+      when: not ansible_check_mode
+
+    - name: Verify APT unit masks and timer state
+      ansible.builtin.assert:
+        that:
+          - "('UnitFileState=masked' in item.stdout_lines) == (item.item in blocked_apt_units)"
+          - "not item.item.endswith('.timer') or ('ActiveState=inactive' if item.item in blocked_apt_units else 'ActiveState=active') in item.stdout_lines"
+          - "not item.item.endswith('.timer') or item.item in blocked_apt_units or 'UnitFileState=enabled' in item.stdout_lines"
+      loop: "{{ units_after.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not ansible_check_mode
+
+    - name: Show completion notes
+      ansible.builtin.debug:
+        msg:
+          - "{{ 'CHECK MODE: no changes applied; final assertions skipped.' if ansible_check_mode else 'Applied state: ' ~ state }}"
+          - "{{ apt_after.stdout_lines }}"
+          - "Already-running APT operations may finish. No packages were installed or removed."
+          - "Desktop users: {{ desktop_users | join(', ') | default('none', true) }}. Log out and back in."
+          - "Manual updates: sudo apt update && sudo apt upgrade; sudo snap refresh"
+          - "Custom cron jobs and third-party update agents are not managed."

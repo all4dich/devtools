@@ -1,0 +1,156 @@
+---
+# Requires ansible-core 2.14+ and Ubuntu with systemd.
+# Example:
+# ansible-playbook -i inventory.ini disable_ubuntu_auto_updates.yml -K \
+#   -e '{"desktop_users":["sunjoo.park"]}'
+# Preview with --check --diff. No packages are installed or removed.
+# Desktop overrides assume the standard ~/.config XDG configuration directory.
+# Automatic security updates are disabled too; install updates manually.
+# References:
+# https://ubuntu.com/server/docs/how-to/software/automatic-updates/
+# https://snapcraft.io/docs/how-to-guides/manage-snaps/manage-updates/
+
+- name: Disable Ubuntu automatic updates and desktop update notifier
+  hosts: "{{ lookup('env', 'ANSIBLE_HOSTS') | default('all', true) }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    # Set in inventory or with -e. Empty means no desktop user changes.
+    desktop_users: []
+    disable_snap_auto_updates: true
+    apt_update_timers:
+      - apt-daily.timer
+      - apt-daily-upgrade.timer
+    apt_update_services:
+      - apt-daily.service
+      - apt-daily-upgrade.service
+
+  pre_tasks:
+    - name: Require Ubuntu with systemd
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.service_mgr == 'systemd'
+          - desktop_users is sequence
+          - desktop_users is not string
+        fail_msg: This playbook requires Ubuntu/systemd and a list of desktop_users.
+
+    - name: Resolve selected desktop users before changing settings
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item }}"
+        fail_key: true
+      loop: "{{ desktop_users }}"
+      register: desktop_accounts
+
+  tasks:
+    - name: Disable periodic APT operations and automatic reboot
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99-disable-auto-updates
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+        content: |
+          // Managed by Ansible: manual package updates only.
+          APT::Periodic::Enable "0";
+          APT::Periodic::Update-Package-Lists "0";
+          APT::Periodic::Download-Upgradeable-Packages "0";
+          APT::Periodic::Unattended-Upgrade "0";
+          Unattended-Upgrade::Automatic-Reboot "false";
+
+    - name: Stop and disable APT update timers
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        state: stopped
+      loop: "{{ apt_update_timers }}"
+
+    # No state: stopped for services: let any running apt/dpkg transaction finish.
+    # unattended-upgrades.service is a shutdown helper, not the update scheduler.
+    - name: Mask APT timers and services against future activation
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        masked: true
+      loop: "{{ apt_update_timers + apt_update_services }}"
+
+    - name: Create selected users' autostart directories
+      ansible.builtin.file:
+        path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.config/autostart"
+        state: directory
+        owner: "{{ item.item }}"
+        group: "{{ item.ansible_facts.getent_passwd[item.item][2] }}"
+        mode: '0755'
+      loop: "{{ desktop_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Disable desktop update notifier at next login
+      ansible.builtin.copy:
+        dest: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.config/autostart/update-notifier.desktop"
+        owner: "{{ item.item }}"
+        group: "{{ item.ansible_facts.getent_passwd[item.item][2] }}"
+        mode: '0644'
+        backup: true
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=Update Notifier
+          Hidden=true
+      loop: "{{ desktop_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check whether Snap is installed
+      ansible.builtin.stat:
+        path: /usr/bin/snap
+      register: snap_binary
+      when: disable_snap_auto_updates | bool
+
+    - name: Configure Snap automatic update hold
+      when:
+        - disable_snap_auto_updates | bool
+        - (snap_binary.stat | default({})).exists | default(false)
+      block:
+        - name: Read available Snap refresh options
+          ansible.builtin.command:
+            argv: [/usr/bin/snap, help, refresh]
+          environment:
+            LC_ALL: C
+          register: snap_refresh_help
+          changed_when: false
+          check_mode: false
+
+        - name: Require Snap hold support
+          ansible.builtin.assert:
+            that:
+              - "'--hold' in snap_refresh_help.stdout"
+            fail_msg: >-
+              This Snap version does not support --hold. Upgrade snapd to 2.58+
+              and rerun, or explicitly skip Snap with
+              -e '{"disable_snap_auto_updates":false}'. APT settings are already applied.
+
+        # Reassert the policy on every run; deliberately reports changed.
+        # Do not use a marker file, which could hide a subsequently removed hold.
+        - name: Hold all automatic Snap refreshes indefinitely
+          ansible.builtin.command:
+            argv: [/usr/bin/snap, refresh, '--hold=forever']
+          changed_when: true
+          when: not ansible_check_mode
+
+        - name: Show planned Snap operation in check mode
+          ansible.builtin.debug:
+            msg: 'Would run: snap refresh --hold=forever'
+          changed_when: true
+          when: ansible_check_mode
+
+    - name: Show completion notes
+      ansible.builtin.debug:
+        msg:
+          - "APT timers/services are masked; already-running package operations may finish."
+          - "Desktop users configured: {{ desktop_users | join(', ') | default('none', true) }}. Log out and back in."
+          - "Manual APT updates: sudo apt update && sudo apt upgrade"
+          - "Manual Snap updates (if installed): sudo snap refresh"
+          - "Scope: standard APT/Snap scheduling and selected users' update-notifier autostart."
+          - "Custom cron jobs or third-party update agents are not managed."
